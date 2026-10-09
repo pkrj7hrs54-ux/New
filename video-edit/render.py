@@ -37,7 +37,7 @@ xs, ys, ws = smooth(xs), smooth(ys), smooth(ws)
 
 # ---------- shot plan: (start, end, zoom, push) ----------
 SHOTS = [
-    (0.00, 0.49, 1.00, 0.00),
+    (0.00, 0.49, 1.18, -0.18),
     (0.49, 2.70, 1.42, 0.06),
     (2.70, 4.12, 1.00, 0.03),
     (4.12, 6.55, 1.32, 0.05),
@@ -189,10 +189,46 @@ g = np.clip((np.arange(H) - H * 0.45) / (H * 0.55), 0, 1) ** 1.3 * 200
 grad[..., 3] = g[:, None].astype(np.uint8)
 GRAD = Image.fromarray(grad, "RGBA")
 
+def hook_line(parts):
+    """parts: list of (text_or_emoji, kind) -> one RGBA strip"""
+    ims = []
+    for txt, kind in parts:
+        if kind == "emoji": ims.append(emoji_img(txt, 110))
+        else:
+            f = ImageFont.truetype(F + ("opentype/inter/Inter-Black.otf" if kind == "big" else "opentype/inter/Inter-SemiBold.otf"),
+                                   112 if kind == "big" else 50)
+            col = (246, 205, 72) if kind == "big" else (255, 255, 255)
+            b = f.getbbox(txt); w, h = b[2] - b[0] + 40, b[3] - b[1] + 40
+            im = Image.new("RGBA", (w, h), (0, 0, 0, 0)); sh = im.copy()
+            ImageDraw.Draw(sh).text((20 - b[0], 20 - b[1]), txt, font=f, fill=(0, 0, 0, 255))
+            im.alpha_composite(sh.filter(ImageFilter.GaussianBlur(10)), (0, 4))
+            ImageDraw.Draw(im).text((20 - b[0], 20 - b[1]), txt, font=f, fill=col + (255,),
+                                    stroke_width=3 if kind == "big" else 0, stroke_fill=(70, 45, 0))
+            ims.append(im)
+    w = sum(i.width for i in ims) + 10 * (len(ims) - 1); h = max(i.height for i in ims)
+    out = Image.new("RGBA", (w, h), (0, 0, 0, 0)); x = 0
+    for i in ims: out.alpha_composite(i, (x, (h - i.height) // 2)); x += i.width + 10
+    if out.width > 1000: out = out.resize((1000, int(out.height * 1000 / out.width)), Image.LANCZOS)
+    return out
+HOOK1 = hook_line([("DALA SAUMAL · АКЦИЯ", "small")])
+HOOK2 = hook_line([("3 алсаңыз — 3 ТЕГІН", "big"), ("🎁", "emoji")])
+tg = np.zeros((H, W, 4), np.uint8)
+tg[..., 3] = (np.clip(1 - np.arange(H) / (H * 0.30), 0, 1) ** 1.4 * 190)[:, None].astype(np.uint8)
+TOPGRAD = Image.fromarray(tg, "RGBA")
+HOOK_END = 2.70
+
 def overlay(t, face):
     ov = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     if 0.49 <= t < 2.70:
         ov.alpha_composite(GRAD)
+    if t < HOOK_END:
+        out_a = min(1, (HOOK_END - t) / 0.15)
+        ov.alpha_composite(TOPGRAD)
+        pulse = 1 + 0.035 * math.sin(max(0, t - 0.3) * 2 * math.pi * 1.6)  # beat pulse
+        paste_scaled(ov, HOOK1, W / 2, 120, ease_pop(t - 0.0, 0.2), out_a)
+        paste_scaled(ov, HOOK2, W / 2, 225, ease_pop(t - 0.12, 0.25) * pulse, out_a)
+        if t < 0.10:  # white flash on the very first frames
+            ov.alpha_composite(Image.new("RGBA", (W, H), (255, 255, 255, int(220 * (1 - t / 0.10)))))
     for s, e, y0, sp in cap_sprites:
         if not (s <= t < e): continue
         out_a = min(1, (e - t) / 0.08)
